@@ -1,0 +1,1727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR Cube Stacking | Hand & Finger Tracking + Arduino</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.9.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection@2.0.0/dist/hand-pose-detection.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+        
+        #container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* Full screen camera - MIRRORED */
+        #fullscreenCamera {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1;
+            object-fit: cover;
+            transform: scaleX(-1);
+            background: #000;
+        }
+        
+        /* 3D canvas overlay */
+        #canvas3d {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 2;
+            pointer-events: none;
+        }
+        
+        /* Hand tracking overlay canvas */
+        #handOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 3;
+            pointer-events: none;
+        }
+        
+        /* UI overlay */
+        #uiOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 4;
+            pointer-events: none;
+        }
+        
+        /* Control panel */
+        #controlPanel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px;
+            border-radius: 15px;
+            width: 350px;
+            border: 2px solid rgba(76, 201, 240, 0.3);
+            pointer-events: auto;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+        }
+        
+        .panel-title {
+            font-size: 1.8rem;
+            margin-bottom: 15px;
+            color: #4cc9f0;
+            text-align: center;
+            font-weight: bold;
+            text-shadow: 0 2px 10px rgba(76, 201, 240, 0.5);
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin: 20px 0;
+        }
+        
+        .stat-item {
+            background: rgba(20, 30, 48, 0.8);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            border: 1px solid rgba(76, 201, 240, 0.2);
+            transition: all 0.3s;
+        }
+        
+        .stat-item:hover {
+            border-color: rgba(76, 201, 240, 0.5);
+            transform: translateY(-2px);
+        }
+        
+        .stat-label {
+            font-size: 0.9rem;
+            color: #aaa;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        
+        .stat-value {
+            font-size: 1.6rem;
+            font-weight: bold;
+            color: #4cc9f0;
+        }
+        
+        /* Hand state panel */
+        #handStatePanel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px;
+            border-radius: 15px;
+            width: 280px;
+            border: 2px solid rgba(255, 71, 87, 0.3);
+            pointer-events: auto;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+        }
+        
+        .hand-state-title {
+            font-size: 1.3rem;
+            color: #ff4757;
+            margin-bottom: 15px;
+            font-weight: bold;
+        }
+        
+        .hand-state-display {
+            font-size: 2rem;
+            font-weight: bold;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            transition: all 0.3s;
+        }
+        
+        .hand-state-display.grabbing {
+            background: linear-gradient(135deg, rgba(255, 71, 87, 0.2), rgba(255, 71, 87, 0.1));
+            color: #ff4757;
+            border: 2px solid rgba(255, 71, 87, 0.6);
+            box-shadow: 0 0 30px rgba(255, 71, 87, 0.4);
+        }
+        
+        .hand-state-display.releasing {
+            background: linear-gradient(135deg, rgba(76, 201, 240, 0.2), rgba(76, 201, 240, 0.1));
+            color: #4cc9f0;
+            border: 2px solid rgba(76, 201, 240, 0.6);
+            box-shadow: 0 0 30px rgba(76, 201, 240, 0.4);
+        }
+        
+        .instructions {
+            font-size: 0.95rem;
+            color: #ddd;
+            line-height: 1.6;
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 10px;
+            border-left: 4px solid #4cc9f0;
+        }
+        
+        /* Arduino Control Panel */
+        #arduinoPanel {
+            position: absolute;
+            bottom: 120px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px;
+            border-radius: 15px;
+            width: 300px;
+            border: 2px solid rgba(46, 204, 113, 0.3);
+            pointer-events: auto;
+            backdrop-filter: blur(10px);
+        }
+        
+        .arduino-title {
+            color: #2ecc71;
+            font-size: 1.4rem;
+            margin-bottom: 15px;
+            font-weight: bold;
+            text-align: center;
+        }
+        
+        .arduino-status {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 10px;
+        }
+        
+        .status-indicator {
+            width: 15px;
+            height: 15px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+        
+        .status-connected {
+            background: #2ecc71;
+            box-shadow: 0 0 10px #2ecc71;
+        }
+        
+        .status-disconnected {
+            background: #e74c3c;
+            box-shadow: 0 0 10px #e74c3c;
+        }
+        
+        .status-connecting {
+            background: #f39c12;
+            box-shadow: 0 0 10px #f39c12;
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .led-display {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            margin: 15px auto;
+            border: 3px solid #333;
+            transition: all 0.3s;
+        }
+        
+        .led-off {
+            background: #222;
+            box-shadow: inset 0 0 20px #111;
+        }
+        
+        .led-red {
+            background: radial-gradient(circle at 30% 30%, #ff4757, #e84118);
+            box-shadow: 0 0 30px #ff4757;
+        }
+        
+        .led-green {
+            background: radial-gradient(circle at 30% 30%, #2ecc71, #27ae60);
+            box-shadow: 0 0 30px #2ecc71;
+        }
+        
+        .led-blue {
+            background: radial-gradient(circle at 30% 30%, #4cc9f0, #3498db);
+            box-shadow: 0 0 30px #4cc9f0;
+        }
+        
+        /* Control buttons */
+        #controlButtons {
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            pointer-events: auto;
+        }
+        
+        .control-button {
+            background: linear-gradient(135deg, rgba(0, 0, 0, 0.9), rgba(20, 20, 40, 0.9));
+            color: #fff;
+            border: 2px solid rgba(76, 201, 240, 0.4);
+            padding: 15px 30px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1.1rem;
+            font-weight: 600;
+            transition: all 0.3s;
+            min-width: 200px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+        }
+        
+        .control-button:hover {
+            background: linear-gradient(135deg, rgba(76, 201, 240, 0.3), rgba(76, 201, 240, 0.1));
+            border-color: #4cc9f0;
+            transform: translateY(-3px) scale(1.05);
+            box-shadow: 0 10px 25px rgba(76, 201, 240, 0.4);
+        }
+        
+        /* Finger tracking info */
+        #fingerTrackingPanel {
+            position: absolute;
+            bottom: 120px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 15px;
+            border-radius: 12px;
+            width: 300px;
+            border: 2px solid rgba(155, 89, 182, 0.3);
+            pointer-events: auto;
+            backdrop-filter: blur(10px);
+        }
+        
+        .finger-title {
+            color: #9b59b6;
+            font-size: 1.2rem;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+        
+        .finger-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            font-size: 0.9rem;
+            color: #ccc;
+        }
+        
+        .finger-item {
+            padding: 8px;
+            background: rgba(155, 89, 182, 0.1);
+            border-radius: 6px;
+            text-align: center;
+        }
+        
+        /* Loading screen */
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            pointer-events: auto;
+        }
+        
+        .spinner {
+            border: 5px solid rgba(255, 255, 255, 0.1);
+            border-top: 5px solid #4cc9f0;
+            border-radius: 50%;
+            width: 70px;
+            height: 70px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 25px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            font-size: 1.4rem;
+            margin-bottom: 10px;
+            text-align: center;
+            color: #fff;
+        }
+        
+        .loading-subtext {
+            font-size: 1rem;
+            color: #aaa;
+            text-align: center;
+            max-width: 500px;
+            padding: 0 20px;
+            line-height: 1.5;
+        }
+        
+        /* Warning message */
+        #warning {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: linear-gradient(135deg, rgba(244, 67, 54, 0.95), rgba(229, 57, 53, 0.95));
+            padding: 40px;
+            border-radius: 15px;
+            max-width: 600px;
+            text-align: center;
+            z-index: 100;
+            display: none;
+            box-shadow: 0 20px 40px rgba(244, 67, 54, 0.4);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        .error-title {
+            font-size: 1.8rem;
+            margin-bottom: 20px;
+            color: #fff;
+            font-weight: bold;
+        }
+        
+        /* Tracking lines visibility toggle */
+        #trackingToggle {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: #fff;
+            border: 2px solid rgba(155, 89, 182, 0.4);
+            padding: 12px 25px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            pointer-events: auto;
+            backdrop-filter: blur(10px);
+            z-index: 5;
+        }
+        
+        /* Mobile adjustments */
+        @media (max-width: 768px) {
+            #controlPanel {
+                top: 10px;
+                left: 10px;
+                right: 10px;
+                width: auto;
+            }
+            
+            #handStatePanel {
+                top: 300px;
+                right: 10px;
+                left: 10px;
+                width: auto;
+            }
+            
+            #arduinoPanel {
+                top: 400px;
+                right: 10px;
+                left: 10px;
+                width: auto;
+                bottom: auto;
+            }
+            
+            #fingerTrackingPanel {
+                top: 550px;
+                left: 10px;
+                right: 10px;
+                width: auto;
+                bottom: auto;
+            }
+            
+            #controlButtons {
+                flex-direction: column;
+                align-items: center;
+                bottom: 10px;
+            }
+            
+            .control-button {
+                width: 90%;
+                max-width: 300px;
+                padding: 12px 20px;
+                font-size: 1rem;
+            }
+            
+            #trackingToggle {
+                top: 10px;
+                padding: 10px 20px;
+                font-size: 0.9rem;
+            }
+            
+            .panel-title {
+                font-size: 1.4rem;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .hand-state-display {
+                font-size: 1.6rem;
+                padding: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <!-- Full screen camera - MIRRORED -->
+        <video id="fullscreenCamera" autoplay playsinline></video>
+        
+        <!-- 3D canvas overlay -->
+        <canvas id="canvas3d"></canvas>
+        
+        <!-- Hand tracking overlay canvas -->
+        <canvas id="handOverlay"></canvas>
+        
+        <!-- UI overlay -->
+        <div id="uiOverlay">
+            <!-- Control panel -->
+            <div id="controlPanel">
+                <div class="panel-title">AR Cube Stacking + Arduino</div>
+                
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">Cubes</div>
+                        <div id="cubeCount" class="stat-value">1</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Grabbed Cube</div>
+                        <div id="grabbedCube" class="stat-value">None</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Fingers Tracked</div>
+                        <div id="fingersTracked" class="stat-value">0</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Arduino LED</div>
+                        <div id="arduinoLED" class="stat-value">OFF</div>
+                    </div>
+                </div>
+                
+                <div class="instructions">
+                    • <strong style="color:#ff4757">FIST</strong>: Grab cubes & turn LED RED<br>
+                    • <strong style="color:#4cc9f0">OPEN HAND</strong>: Release cubes & LED OFF<br>
+                    • <strong style="color:#2ecc71">ARDUINO</strong>: Real-time LED control<br>
+                    • <strong style="color:#9b59b6">SPACEBAR</strong>: Spawn new cube
+                </div>
+            </div>
+            
+            <!-- Hand state panel -->
+            <div id="handStatePanel">
+                <div class="hand-state-title">HAND STATE</div>
+                <div id="handStateDisplay" class="hand-state-display releasing">RELEASING</div>
+                <div class="instructions" style="border-left-color: #ff4757;">
+                    Hand Closed: <span id="handClosedStatus">No</span><br>
+                    Arduino Signal: <span id="arduinoSignalStatus">No Signal</span>
+                </div>
+            </div>
+            
+            <!-- Arduino Control Panel -->
+            <div id="arduinoPanel">
+                <div class="arduino-title">ARDUINO CONTROL</div>
+                
+                <div class="arduino-status">
+                    <div id="arduinoStatusIndicator" class="status-indicator status-disconnected"></div>
+                    <div id="arduinoStatusText">Disconnected</div>
+                </div>
+                
+                <div id="arduinoLEDDisplay" class="led-display led-off"></div>
+                
+                <div style="text-align: center; margin-top: 10px;">
+                    <div id="ledStatusText">LED: OFF</div>
+                    <div style="font-size: 0.8rem; color: #aaa; margin-top: 5px;">
+                        Auto-controlled by hand gestures
+                    </div>
+                </div>
+                
+                <div style="margin-top: 15px;">
+                    <button id="connectArduinoBtn" style="
+                        background: #2ecc71;
+                        color: white;
+                        border: none;
+                        padding: 8px 15px;
+                        border-radius: 5px;
+                        cursor: pointer;
+                        width: 100%;
+                        font-weight: bold;
+                    ">Connect to Arduino</button>
+                    
+                    <div style="margin-top: 10px; font-size: 0.8rem; color: #aaa;">
+                        Port: <span id="arduinoPort">Not selected</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Finger tracking info -->
+            <div id="fingerTrackingPanel">
+                <div class="finger-title">FINGER TRACKING</div>
+                <div class="finger-info">
+                    <div class="finger-item">Thumb: <span id="thumbPos">-</span></div>
+                    <div class="finger-item">Index: <span id="indexPos">-</span></div>
+                    <div class="finger-item">Middle: <span id="middlePos">-</span></div>
+                    <div class="finger-item">Ring: <span id="ringPos">-</span></div>
+                    <div class="finger-item">Pinky: <span id="pinkyPos">-</span></div>
+                    <div class="finger-item">Palm: <span id="palmPos">-</span></div>
+                </div>
+            </div>
+            
+            <!-- Tracking lines toggle -->
+            <button id="trackingToggle">Show Tracking Lines</button>
+            
+            <!-- Control buttons -->
+            <div id="controlButtons">
+                <button id="spawnCubeBtn" class="control-button">Spawn Cube (Space)</button>
+                <button id="resetBtn" class="control-button">Reset Cubes (R)</button>
+                <button id="fullscreenBtn" class="control-button">Fullscreen (F)</button>
+            </div>
+        </div>
+        
+        <!-- Loading screen -->
+        <div id="loading">
+            <div class="spinner"></div>
+            <div class="loading-text">Loading Hand Tracking System</div>
+            <div class="loading-subtext">
+                Initializing camera, 3D environment, and finger tracking.<br>
+                Please allow camera access when prompted.
+            </div>
+            <div id="loadingProgress" style="margin-top: 20px; color: #4cc9f0; font-size: 0.9rem;"></div>
+        </div>
+        
+        <!-- Warning message -->
+        <div id="warning">
+            <div class="error-title">⚠️ Camera Access Required</div>
+            <div id="errorMessage" style="margin-bottom: 25px; line-height: 1.6; font-size: 1.1rem;">
+                Unable to access your camera. This app requires camera access to track your hands and fingers.
+            </div>
+            <button onclick="window.location.reload()" style="
+                background: #fff;
+                color: #f44336;
+                border: none;
+                padding: 12px 30px;
+                border-radius: 25px;
+                font-size: 1.1rem;
+                cursor: pointer;
+                font-weight: 600;
+                transition: all 0.3s;
+            ">Retry Camera Access</button>
+        </div>
+    </div>
+
+    <script>
+        // ==============================================
+        // MAIN APPLICATION
+        // ==============================================
+        
+        // Core variables
+        let video = null;
+        let canvas3d = null;
+        let handOverlay = null;
+        let overlayCtx = null;
+        let scene = null;
+        let camera = null;
+        let renderer = null;
+        let handDetector = null;
+        let animationId = null;
+        
+        // Cubes management
+        let cubes = [];
+        let grabbedCube = null;
+        let cubeIdCounter = 1;
+        const CUBE_SIZE = 1;
+        const CUBE_COLORS = [
+            0x4cc9f0, 0xff4757, 0x2ecc71, 0xf39c12,
+            0x9b59b6, 0x1abc9c, 0xe74c3c, 0x3498db
+        ];
+        
+        // Hand tracking
+        let hands = [];
+        let isHandClosed = false;
+        let currentHandPosition = { x: 0, y: 0, z: 0 };
+        let fingerPositions = {};
+        
+        // Arduino communication
+        let arduinoPort = null;
+        let arduinoConnected = false;
+        let arduinoWriter = null;
+        let lastHandState = null;
+        
+        // Tracking lines settings
+        let showTrackingLines = true;
+        const TRACKING_CONNECTIONS = [
+            // Palm connections
+            [0, 1], [0, 5], [0, 17],
+            [5, 9], [9, 13], [13, 17],
+            // Thumb
+            [1, 2], [2, 3], [3, 4],
+            // Index finger
+            [5, 6], [6, 7], [7, 8],
+            // Middle finger
+            [9, 10], [10, 11], [11, 12],
+            // Ring finger
+            [13, 14], [14, 15], [15, 16],
+            // Pinky finger
+            [17, 18], [18, 19], [19, 20]
+        ];
+        
+        // Physics
+        const GRAVITY = 0.01;
+        const GROUND_Y = -3;
+        
+        // DOM elements
+        const loadingElement = document.getElementById('loading');
+        const loadingProgress = document.getElementById('loadingProgress');
+        const warningElement = document.getElementById('warning');
+        const errorMessageElement = document.getElementById('errorMessage');
+        const cubeCountElement = document.getElementById('cubeCount');
+        const grabbedCubeElement = document.getElementById('grabbedCube');
+        const fingersTrackedElement = document.getElementById('fingersTracked');
+        const arduinoLEDElement = document.getElementById('arduinoLED');
+        const handStateDisplay = document.getElementById('handStateDisplay');
+        const handClosedStatusElement = document.getElementById('handClosedStatus');
+        const arduinoSignalStatusElement = document.getElementById('arduinoSignalStatus');
+        const fingerPositionElements = {
+            thumb: document.getElementById('thumbPos'),
+            index: document.getElementById('indexPos'),
+            middle: document.getElementById('middlePos'),
+            ring: document.getElementById('ringPos'),
+            pinky: document.getElementById('pinkyPos'),
+            palm: document.getElementById('palmPos')
+        };
+        const trackingToggle = document.getElementById('trackingToggle');
+        const arduinoStatusIndicator = document.getElementById('arduinoStatusIndicator');
+        const arduinoStatusText = document.getElementById('arduinoStatusText');
+        const arduinoLEDDisplay = document.getElementById('arduinoLEDDisplay');
+        const ledStatusText = document.getElementById('ledStatusText');
+        const arduinoPortElement = document.getElementById('arduinoPort');
+        const connectArduinoBtn = document.getElementById('connectArduinoBtn');
+        const spawnCubeBtn = document.getElementById('spawnCubeBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const fullscreenBtn = document.getElementById('fullscreenBtn');
+        
+        // ==============================================
+        // ARDUINO COMMUNICATION
+        // ==============================================
+        
+        async function connectToArduino() {
+            try {
+                if (!navigator.serial) {
+                    showArduinoError("Web Serial API not supported. Use Chrome/Edge 89+.");
+                    return;
+                }
+                
+                updateArduinoStatus("connecting", "Connecting...");
+                
+                // Request port selection
+                arduinoPort = await navigator.serial.requestPort();
+                
+                // Wait for the port to open
+                await arduinoPort.open({ baudRate: 9600 });
+                
+                updateArduinoStatus("connected", "Connected");
+                
+                // Get writer for sending data
+                const textEncoder = new TextEncoderStream();
+                const writableStreamClosed = textEncoder.readable.pipeTo(arduinoPort.writable);
+                arduinoWriter = textEncoder.writable.getWriter();
+                
+                arduinoConnected = true;
+                arduinoPortElement.textContent = arduinoPort.getInfo().usbProductId || "Connected";
+                
+                // Send initial handshake
+                await sendToArduino("HANDSHAKE");
+                
+                console.log("Arduino connected successfully");
+                
+            } catch (error) {
+                console.error("Arduino connection error:", error);
+                updateArduinoStatus("disconnected", "Failed to connect");
+                arduinoConnected = false;
+                
+                if (error.name === 'NotFoundError') {
+                    showArduinoError("No Arduino device selected.");
+                } else if (error.name === 'SecurityError') {
+                    showArduinoError("Permission denied. Please allow serial port access.");
+                } else {
+                    showArduinoError(`Connection error: ${error.message}`);
+                }
+            }
+        }
+        
+        async function sendToArduino(command) {
+            if (!arduinoConnected || !arduinoWriter) {
+                console.warn("Arduino not connected");
+                return;
+            }
+            
+            try {
+                await arduinoWriter.write(command + "\n");
+                console.log("Sent to Arduino:", command);
+                
+                // Update signal status
+                arduinoSignalStatusElement.textContent = "Signal Sent";
+                arduinoSignalStatusElement.style.color = "#2ecc71";
+                
+                // Reset after 1 second
+                setTimeout(() => {
+                    arduinoSignalStatusElement.textContent = "Ready";
+                    arduinoSignalStatusElement.style.color = "#aaa";
+                }, 1000);
+                
+            } catch (error) {
+                console.error("Error sending to Arduino:", error);
+                updateArduinoStatus("disconnected", "Connection lost");
+                arduinoConnected = false;
+            }
+        }
+        
+        function updateArduinoStatus(status, text) {
+            // Update indicator
+            arduinoStatusIndicator.className = "status-indicator";
+            arduinoStatusIndicator.classList.add(`status-${status}`);
+            
+            // Update text
+            arduinoStatusText.textContent = text;
+            
+            // Update button
+            connectArduinoBtn.textContent = status === "connected" ? 
+                "Disconnect Arduino" : "Connect to Arduino";
+            
+            // Update connection state
+            arduinoConnected = status === "connected";
+        }
+        
+        function showArduinoError(message) {
+            alert(`Arduino Error: ${message}`);
+        }
+        
+        function controlArduinoLED(handState) {
+            if (!arduinoConnected) return;
+            
+            // Only send if state changed
+            if (lastHandState !== handState) {
+                lastHandState = handState;
+                
+                if (handState === "CLOSED") {
+                    // Send command to turn LED RED
+                    sendToArduino("LED_RED");
+                    updateLEDDisplay("red");
+                    arduinoLEDElement.textContent = "RED";
+                    arduinoLEDElement.style.color = "#ff4757";
+                    ledStatusText.textContent = "LED: RED (Fist Detected)";
+                } else {
+                    // Send command to turn LED OFF
+                    sendToArduino("LED_OFF");
+                    updateLEDDisplay("off");
+                    arduinoLEDElement.textContent = "OFF";
+                    arduinoLEDElement.style.color = "#4cc9f0";
+                    ledStatusText.textContent = "LED: OFF (Hand Open)";
+                }
+            }
+        }
+        
+        function updateLEDDisplay(state) {
+            arduinoLEDDisplay.className = "led-display";
+            
+            switch(state) {
+                case "red":
+                    arduinoLEDDisplay.classList.add("led-red");
+                    break;
+                case "green":
+                    arduinoLEDDisplay.classList.add("led-green");
+                    break;
+                case "blue":
+                    arduinoLEDDisplay.classList.add("led-blue");
+                    break;
+                default:
+                    arduinoLEDDisplay.classList.add("led-off");
+            }
+        }
+        
+        // ==============================================
+        // INITIALIZATION
+        // ==============================================
+        
+        async function init() {
+            try {
+                updateLoadingProgress("Starting initialization...");
+                
+                await initCamera();
+                updateLoadingProgress("Camera initialized");
+                
+                init3DScene();
+                updateLoadingProgress("3D scene initialized");
+                
+                initHandOverlay();
+                updateLoadingProgress("Hand tracking overlay ready");
+                
+                await initHandDetection();
+                updateLoadingProgress("Hand detection model loaded");
+                
+                setupEventListeners();
+                updateLoadingProgress("Event listeners set up");
+                
+                createCube(0, 2, 0);
+                
+                animate();
+                updateLoadingProgress("Starting hand tracking...");
+                
+                setTimeout(() => {
+                    loadingElement.style.display = 'none';
+                }, 500);
+                
+            } catch (error) {
+                console.error("Initialization error:", error);
+                showError(error.message);
+            }
+        }
+        
+        async function initCamera() {
+            video = document.getElementById('fullscreenCamera');
+            
+            if (!navigator.mediaDevices?.getUserMedia) {
+                throw new Error("Browser doesn't support camera access.");
+            }
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: 'user',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                });
+                
+                video.srcObject = stream;
+                
+                return new Promise((resolve, reject) => {
+                    video.onloadedmetadata = () => {
+                        video.play().then(resolve).catch(reject);
+                    };
+                    
+                    video.onerror = reject;
+                    setTimeout(() => reject(new Error("Camera timeout")), 5000);
+                });
+                
+            } catch (error) {
+                if (error.name === 'NotAllowedError') {
+                    throw new Error("Camera permission denied. Please allow access.");
+                } else if (error.name === 'NotFoundError') {
+                    throw new Error("No camera found.");
+                } else {
+                    throw new Error("Camera error: " + error.message);
+                }
+            }
+        }
+        
+        function init3DScene() {
+            canvas3d = document.getElementById('canvas3d');
+            
+            scene = new THREE.Scene();
+            scene.background = null;
+            
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 10);
+            camera.lookAt(0, 0, 0);
+            
+            renderer = new THREE.WebGLRenderer({ 
+                canvas: canvas3d, 
+                antialias: true, 
+                alpha: true 
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setClearColor(0x000000, 0);
+            
+            // Enhanced lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(5, 10, 7);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+            
+            // Add floating lights for better cube visibility
+            const pointLight1 = new THREE.PointLight(0x4cc9f0, 0.5, 20);
+            pointLight1.position.set(5, 5, 5);
+            scene.add(pointLight1);
+            
+            const pointLight2 = new THREE.PointLight(0xff4757, 0.5, 20);
+            pointLight2.position.set(-5, 5, -5);
+            scene.add(pointLight2);
+            
+            // Ground with better visibility
+            const groundGeometry = new THREE.PlaneGeometry(30, 30);
+            const groundMaterial = new THREE.MeshStandardMaterial({ 
+                color: 0x222233,
+                metalness: 0.5,
+                roughness: 0.8,
+                transparent: true,
+                opacity: 0.4
+            });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = GROUND_Y;
+            ground.receiveShadow = true;
+            scene.add(ground);
+            
+            // Grid with better visibility
+            const gridHelper = new THREE.GridHelper(30, 30, 0x6666ff, 0x333388);
+            gridHelper.position.y = GROUND_Y + 0.01;
+            gridHelper.material.opacity = 0.3;
+            gridHelper.material.transparent = true;
+            scene.add(gridHelper);
+            
+            window.addEventListener('resize', onWindowResize);
+        }
+        
+        function initHandOverlay() {
+            handOverlay = document.getElementById('handOverlay');
+            overlayCtx = handOverlay.getContext('2d');
+            handOverlay.width = window.innerWidth;
+            handOverlay.height = window.innerHeight;
+        }
+        
+        async function initHandDetection() {
+            if (!tf || !window.handPoseDetection) {
+                throw new Error("Required libraries not loaded.");
+            }
+            
+            const model = handPoseDetection.SupportedModels.MediaPipeHands;
+            const detectorConfig = {
+                runtime: 'mediapipe',
+                modelType: 'full',
+                maxHands: 2,
+                solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/hands'
+            };
+            
+            handDetector = await handPoseDetection.createDetector(model, detectorConfig);
+        }
+        
+        // ==============================================
+        // HAND TRACKING & ARDUINO CONTROL
+        // ==============================================
+        
+        async function detectHands() {
+            if (!handDetector) return;
+            
+            try {
+                // Compensate for mirrored camera
+                hands = await handDetector.estimateHands(video, { flipHorizontal: true });
+                
+                if (hands.length > 0) {
+                    const hand = hands[0];
+                    updateHandState(hand);
+                    updateHandPosition(hand);
+                    updateFingerPositions(hand);
+                    drawHandTrackingLines(hand);
+                    
+                    // Control Arduino based on hand state
+                    controlArduinoLED(isHandClosed ? "CLOSED" : "OPEN");
+                    
+                    if (isHandClosed) {
+                        handleGrabAction();
+                    } else {
+                        handleReleaseAction();
+                    }
+                    
+                    updateTrackingStats(hand);
+                } else {
+                    clearTrackingLines();
+                    if (isHandClosed) {
+                        isHandClosed = false;
+                        updateHandUI();
+                        releaseCube();
+                    }
+                    
+                    // No hand detected - turn LED off
+                    controlArduinoLED("OPEN");
+                }
+                
+            } catch (error) {
+                console.warn("Hand detection error:", error);
+            }
+        }
+        
+        function updateHandState(hand) {
+            const landmarks = hand.keypoints;
+            const palm = landmarks[0];
+            
+            const fingertips = [landmarks[4], landmarks[8], landmarks[12], landmarks[16], landmarks[20]];
+            let totalDistance = 0;
+            
+            fingertips.forEach(tip => {
+                const dx = tip.x - palm.x;
+                const dy = tip.y - palm.y;
+                totalDistance += Math.sqrt(dx * dx + dy * dy);
+            });
+            
+            const avgDistance = totalDistance / fingertips.length;
+            const newIsHandClosed = avgDistance < 120;
+            
+            if (newIsHandClosed !== isHandClosed) {
+                isHandClosed = newIsHandClosed;
+                updateHandUI();
+                
+                if (!isHandClosed && grabbedCube) {
+                    releaseCube();
+                }
+            }
+        }
+        
+        function updateHandPosition(hand) {
+            const indexFinger = hand.keypoints[8];
+            const videoWidth = video.videoWidth || window.innerWidth;
+            const videoHeight = video.videoHeight || window.innerHeight;
+            
+            const screenX = (indexFinger.x / videoWidth);
+            const screenY = 1 - (indexFinger.y / videoHeight);
+            
+            const worldX = (screenX * 12) - 6;
+            const worldY = (screenY * 8) - 4;
+            
+            currentHandPosition = { x: worldX, y: worldY, z: 0 };
+        }
+        
+        function updateFingerPositions(hand) {
+            const landmarks = hand.keypoints;
+            
+            // Map finger positions to screen coordinates
+            const videoWidth = video.videoWidth || window.innerWidth;
+            const videoHeight = video.videoHeight || window.innerHeight;
+            
+            fingerPositions = {
+                thumb: { x: landmarks[4].x / videoWidth, y: landmarks[4].y / videoHeight },
+                index: { x: landmarks[8].x / videoWidth, y: landmarks[8].y / videoHeight },
+                middle: { x: landmarks[12].x / videoWidth, y: landmarks[12].y / videoHeight },
+                ring: { x: landmarks[16].x / videoWidth, y: landmarks[16].y / videoHeight },
+                pinky: { x: landmarks[20].x / videoWidth, y: landmarks[20].y / videoHeight },
+                palm: { x: landmarks[0].x / videoWidth, y: landmarks[0].y / videoHeight }
+            };
+            
+            // Update UI
+            fingerPositionElements.thumb.textContent = `${Math.round(fingerPositions.thumb.x * 100)}%`;
+            fingerPositionElements.index.textContent = `${Math.round(fingerPositions.index.x * 100)}%`;
+            fingerPositionElements.middle.textContent = `${Math.round(fingerPositions.middle.x * 100)}%`;
+            fingerPositionElements.ring.textContent = `${Math.round(fingerPositions.ring.x * 100)}%`;
+            fingerPositionElements.pinky.textContent = `${Math.round(fingerPositions.pinky.x * 100)}%`;
+            fingerPositionElements.palm.textContent = `${Math.round(fingerPositions.palm.x * 100)}%`;
+        }
+        
+        function drawHandTrackingLines(hand) {
+            if (!showTrackingLines) {
+                clearTrackingLines();
+                return;
+            }
+            
+            const landmarks = hand.keypoints;
+            const videoWidth = video.videoWidth || window.innerWidth;
+            const videoHeight = video.videoHeight || window.innerHeight;
+            
+            // Clear previous frame
+            overlayCtx.clearRect(0, 0, handOverlay.width, handOverlay.height);
+            
+            // Draw connections with current style
+            TRACKING_CONNECTIONS.forEach(connection => {
+                const [startIdx, endIdx] = connection;
+                const start = landmarks[startIdx];
+                const end = landmarks[endIdx];
+                
+                if (!start || !end) return;
+                
+                // Convert to screen coordinates
+                const startX = (start.x / videoWidth) * handOverlay.width;
+                const startY = (start.y / videoHeight) * handOverlay.height;
+                const endX = (end.x / videoWidth) * handOverlay.width;
+                const endY = (end.y / videoHeight) * handOverlay.height;
+                
+                drawLineWithStyle(startX, startY, endX, endY);
+            });
+            
+            // Draw finger landmarks
+            landmarks.forEach((landmark, index) => {
+                const x = (landmark.x / videoWidth) * handOverlay.width;
+                const y = (landmark.y / videoHeight) * handOverlay.height;
+                
+                drawLandmarkWithStyle(x, y, index);
+            });
+        }
+        
+        function drawLineWithStyle(x1, y1, x2, y2) {
+            // Glowing effect with shadow
+            overlayCtx.shadowBlur = 15;
+            overlayCtx.shadowColor = isHandClosed ? '#ff4757' : '#4cc9f0';
+            overlayCtx.strokeStyle = isHandClosed ? '#ff4757' : '#4cc9f0';
+            overlayCtx.lineWidth = 3;
+            overlayCtx.lineCap = 'round';
+            
+            overlayCtx.beginPath();
+            overlayCtx.moveTo(x1, y1);
+            overlayCtx.lineTo(x2, y2);
+            overlayCtx.stroke();
+            
+            // Reset shadow
+            overlayCtx.shadowBlur = 0;
+        }
+        
+        function drawLandmarkWithStyle(x, y, index) {
+            const isFingertip = [4, 8, 12, 16, 20].includes(index);
+            
+            overlayCtx.beginPath();
+            overlayCtx.arc(x, y, isFingertip ? 8 : 5, 0, Math.PI * 2);
+            
+            if (isHandClosed) {
+                overlayCtx.fillStyle = '#ff4757';
+                overlayCtx.shadowBlur = 15;
+                overlayCtx.shadowColor = '#ff4757';
+            } else {
+                overlayCtx.fillStyle = '#4cc9f0';
+                overlayCtx.shadowBlur = 10;
+                overlayCtx.shadowColor = '#4cc9f0';
+            }
+            
+            overlayCtx.fill();
+            overlayCtx.shadowBlur = 0;
+            
+            // Draw inner dot for fingertips
+            if (isFingertip) {
+                overlayCtx.beginPath();
+                overlayCtx.arc(x, y, 3, 0, Math.PI * 2);
+                overlayCtx.fillStyle = '#ffffff';
+                overlayCtx.fill();
+            }
+        }
+        
+        function clearTrackingLines() {
+            overlayCtx.clearRect(0, 0, handOverlay.width, handOverlay.height);
+        }
+        
+        function updateTrackingStats(hand) {
+            const landmarks = hand.keypoints;
+            
+            // Count valid landmarks
+            const validLandmarks = landmarks.filter(l => l.score > 0.5).length;
+            fingersTrackedElement.textContent = validLandmarks;
+            
+            // Update hand status
+            handClosedStatusElement.textContent = isHandClosed ? "Yes" : "No";
+            handClosedStatusElement.style.color = isHandClosed ? "#ff4757" : "#4cc9f0";
+        }
+        
+        // ==============================================
+        // CUBE MANAGEMENT
+        // ==============================================
+        
+        function createCube(x, y, z) {
+            const cubeId = cubeIdCounter++;
+            const color = CUBE_COLORS[Math.floor(Math.random() * CUBE_COLORS.length)];
+            
+            const geometry = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
+            const material = new THREE.MeshStandardMaterial({
+                color: color,
+                metalness: 0.8,
+                roughness: 0.2,
+                emissive: color,
+                emissiveIntensity: 0.2
+            });
+            
+            const cube = new THREE.Mesh(geometry, material);
+            cube.position.set(x, y, z);
+            cube.castShadow = true;
+            cube.receiveShadow = true;
+            
+            cube.userData = {
+                id: cubeId,
+                isGrabbed: false,
+                velocityY: 0,
+                color: color,
+                isOnGround: false
+            };
+            
+            // Enhanced wireframe
+            const edges = new THREE.EdgesGeometry(geometry);
+            const lineMaterial = new THREE.LineBasicMaterial({ 
+                color: 0xffffff,
+                linewidth: 2,
+                transparent: true,
+                opacity: 0.7
+            });
+            const wireframe = new THREE.LineSegments(edges, lineMaterial);
+            cube.add(wireframe);
+            
+            scene.add(cube);
+            cubes.push(cube);
+            
+            updateCubeCount();
+            return cube;
+        }
+        
+        function grabCube(cube) {
+            if (grabbedCube) releaseCube();
+            
+            grabbedCube = cube;
+            cube.userData.isGrabbed = true;
+            cube.userData.velocityY = 0;
+            
+            // Highlight grabbed cube
+            cube.material.emissiveIntensity = 0.5;
+            cube.material.color.set(0xff4757);
+            
+            updateGrabbedCubeInfo();
+        }
+        
+        function releaseCube() {
+            if (grabbedCube) {
+                grabbedCube.userData.isGrabbed = false;
+                grabbedCube.material.emissiveIntensity = 0.2;
+                grabbedCube.material.color.set(grabbedCube.userData.color);
+                grabbedCube = null;
+                
+                updateGrabbedCubeInfo();
+            }
+        }
+        
+        function moveGrabbedCube() {
+            if (grabbedCube) {
+                // Smooth movement with some lift
+                grabbedCube.position.x += (currentHandPosition.x - grabbedCube.position.x) * 0.25;
+                grabbedCube.position.y += ((currentHandPosition.y + 2) - grabbedCube.position.y) * 0.25;
+                grabbedCube.position.z += (currentHandPosition.z - grabbedCube.position.z) * 0.25;
+            }
+        }
+        
+        function handleGrabAction() {
+            moveGrabbedCube();
+            
+            if (!grabbedCube) {
+                const raycast = getCubeAtHand();
+                if (raycast) {
+                    grabCube(raycast.object);
+                }
+            }
+        }
+        
+        function handleReleaseAction() {
+            if (grabbedCube) {
+                releaseCube();
+            }
+        }
+        
+        function getCubeAtHand() {
+            let closestCube = null;
+            let closestDistance = 2;
+            
+            cubes.forEach(cube => {
+                if (cube === grabbedCube) return;
+                
+                const dx = cube.position.x - currentHandPosition.x;
+                const dy = cube.position.y - currentHandPosition.y;
+                const dz = cube.position.z - currentHandPosition.z;
+                const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestCube = cube;
+                }
+            });
+            
+            return closestCube ? { object: closestCube } : null;
+        }
+        
+        function updateCubeCount() {
+            cubeCountElement.textContent = cubes.length;
+        }
+        
+        function updateGrabbedCubeInfo() {
+            if (grabbedCube) {
+                grabbedCubeElement.textContent = `Cube ${grabbedCube.userData.id}`;
+                grabbedCubeElement.style.color = '#ff4757';
+            } else {
+                grabbedCubeElement.textContent = 'None';
+                grabbedCubeElement.style.color = '#4cc9f0';
+            }
+        }
+        
+        function clearAllCubes() {
+            cubes.forEach(cube => {
+                scene.remove(cube);
+                cube.geometry.dispose();
+                cube.material.dispose();
+            });
+            cubes = [];
+            grabbedCube = null;
+            updateCubeCount();
+            updateGrabbedCubeInfo();
+        }
+        
+        function resetCubes() {
+            clearAllCubes();
+            createCube(0, 2, 0);
+        }
+        
+        function spawnRandomCube() {
+            const x = (Math.random() * 6) - 3;
+            const z = (Math.random() * 6) - 3;
+            createCube(x, 5, z);
+        }
+        
+        function applyPhysics() {
+            cubes.forEach(cube => {
+                if (cube.userData.isGrabbed) {
+                    cube.userData.velocityY = 0;
+                    cube.userData.isOnGround = false;
+                } else {
+                    cube.userData.velocityY -= GRAVITY;
+                    cube.position.y += cube.userData.velocityY;
+                    
+                    if (cube.position.y - CUBE_SIZE/2 <= GROUND_Y) {
+                        cube.position.y = GROUND_Y + CUBE_SIZE/2;
+                        cube.userData.velocityY = 0;
+                        cube.userData.isOnGround = true;
+                    }
+                    
+                    cubes.forEach(otherCube => {
+                        if (cube === otherCube) return;
+                        
+                        const dx = cube.position.x - otherCube.position.x;
+                        const dy = cube.position.y - otherCube.position.y;
+                        const dz = cube.position.z - otherCube.position.z;
+                        const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                        
+                        if (distance < CUBE_SIZE && dy > 0) {
+                            cube.position.y = otherCube.position.y + CUBE_SIZE;
+                            cube.userData.velocityY = 0;
+                            cube.userData.isOnGround = true;
+                        }
+                    });
+                }
+            });
+        }
+        
+        // ==============================================
+        // UI CONTROLS
+        // ==============================================
+        
+        function updateHandUI() {
+            if (isHandClosed) {
+                handStateDisplay.textContent = "GRABBING";
+                handStateDisplay.className = "hand-state-display grabbing";
+            } else {
+                handStateDisplay.textContent = "RELEASING";
+                handStateDisplay.className = "hand-state-display releasing";
+            }
+        }
+        
+        function setupEventListeners() {
+            // Arduino connect button
+            connectArduinoBtn.addEventListener('click', async () => {
+                if (!arduinoConnected) {
+                    await connectToArduino();
+                } else {
+                    // Disconnect
+                    if (arduinoWriter) {
+                        await arduinoWriter.close();
+                    }
+                    if (arduinoPort) {
+                        await arduinoPort.close();
+                    }
+                    updateArduinoStatus("disconnected", "Disconnected");
+                    arduinoConnected = false;
+                    arduinoWriter = null;
+                    arduinoPort = null;
+                    arduinoPortElement.textContent = "Not selected";
+                    updateLEDDisplay("off");
+                    ledStatusText.textContent = "LED: OFF";
+                }
+            });
+            
+            // Tracking lines toggle
+            trackingToggle.addEventListener('click', () => {
+                showTrackingLines = !showTrackingLines;
+                trackingToggle.textContent = showTrackingLines ? 
+                    'Hide Tracking Lines' : 'Show Tracking Lines';
+            });
+            
+            // Control buttons
+            spawnCubeBtn.addEventListener('click', spawnRandomCube);
+            resetBtn.addEventListener('click', resetCubes);
+            fullscreenBtn.addEventListener('click', toggleFullscreen);
+            
+            // Keyboard controls
+            document.addEventListener('keydown', handleKeyDown);
+            
+            // Fullscreen events
+            document.addEventListener('fullscreenchange', handleFullscreenChange);
+            document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+            
+            // Manual LED test buttons (hidden in UI but accessible via console)
+            window.testRedLED = () => {
+                if (arduinoConnected) {
+                    sendToArduino("LED_RED");
+                    updateLEDDisplay("red");
+                    ledStatusText.textContent = "LED: RED (Test)";
+                }
+            };
+            
+            window.testGreenLED = () => {
+                if (arduinoConnected) {
+                    sendToArduino("LED_GREEN");
+                    updateLEDDisplay("green");
+                    ledStatusText.textContent = "LED: GREEN (Test)";
+                }
+            };
+            
+            window.testBlueLED = () => {
+                if (arduinoConnected) {
+                    sendToArduino("LED_BLUE");
+                    updateLEDDisplay("blue");
+                    ledStatusText.textContent = "LED: BLUE (Test)";
+                }
+            };
+        }
+        
+        function handleKeyDown(event) {
+            switch(event.code) {
+                case 'Space':
+                    event.preventDefault();
+                    spawnRandomCube();
+                    break;
+                    
+                case 'KeyR':
+                    event.preventDefault();
+                    resetCubes();
+                    break;
+                    
+                case 'KeyC':
+                    event.preventDefault();
+                    clearAllCubes();
+                    break;
+                    
+                case 'KeyF':
+                    event.preventDefault();
+                    toggleFullscreen();
+                    break;
+                    
+                case 'KeyT':
+                    event.preventDefault();
+                    showTrackingLines = !showTrackingLines;
+                    trackingToggle.textContent = showTrackingLines ? 
+                        'Hide Tracking Lines' : 'Show Tracking Lines';
+                    break;
+                    
+                case 'KeyA':
+                    event.preventDefault();
+                    if (!arduinoConnected) {
+                        connectToArduino();
+                    }
+                    break;
+            }
+        }
+        
+        function toggleFullscreen() {
+            const container = document.getElementById('container');
+            
+            if (!document.fullscreenElement) {
+                container.requestFullscreen?.() || 
+                container.webkitRequestFullscreen?.();
+            } else {
+                document.exitFullscreen?.() || 
+                document.webkitExitFullscreen?.();
+            }
+        }
+        
+        function handleFullscreenChange() {
+            isFullscreen = !!document.fullscreenElement;
+            fullscreenBtn.textContent = isFullscreen ? 'Exit Fullscreen (F)' : 'Fullscreen (F)';
+            onWindowResize();
+        }
+        
+        // ==============================================
+        // ANIMATION & UTILITIES
+        // ==============================================
+        
+        function animate() {
+            animationId = requestAnimationFrame(animate);
+            detectHands();
+            applyPhysics();
+            
+            // Animate floating lights
+            const time = Date.now() * 0.001;
+            const pointLights = scene.children.filter(child => child instanceof THREE.PointLight);
+            pointLights.forEach((light, index) => {
+                light.position.x = Math.sin(time + index) * 8;
+                light.position.z = Math.cos(time + index) * 8;
+            });
+            
+            renderer.render(scene, camera);
+        }
+        
+        function onWindowResize() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+            
+            if (handOverlay) {
+                handOverlay.width = width;
+                handOverlay.height = height;
+            }
+        }
+        
+        function updateLoadingProgress(message) {
+            if (loadingProgress) {
+                loadingProgress.textContent = message;
+            }
+            console.log(message);
+        }
+        
+        function showError(message) {
+            loadingElement.style.display = 'none';
+            errorMessageElement.textContent = message;
+            warningElement.style.display = 'block';
+        }
+        
+        function cleanup() {
+            if (animationId) cancelAnimationFrame(animationId);
+            if (video?.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
+            if (arduinoWriter) {
+                arduinoWriter.close();
+            }
+            if (arduinoPort) {
+                arduinoPort.close();
+            }
+            clearAllCubes();
+        }
+        
+        // ==============================================
+        // ARDUINO CODE FOR REFERENCE
+        // ==============================================
+        
+        /*
+        Here's the Arduino code you'll need to upload to your Arduino:
+        
+        // ARDUINO CODE
+        const int redPin = 9;     // Red LED pin
+        const int greenPin = 10;  // Green LED pin
+        const int bluePin = 11;   // Blue LED pin
+        
+        void setup() {
+            Serial.begin(9600);
+            pinMode(redPin, OUTPUT);
+            pinMode(greenPin, OUTPUT);
+            pinMode(bluePin, OUTPUT);
+            
+            // Turn all LEDs off initially
+            digitalWrite(redPin, LOW);
+            digitalWrite(greenPin, LOW);
+            digitalWrite(bluePin, LOW);
+            
+            Serial.println("Arduino Ready - Send commands:");
+            Serial.println("LED_RED, LED_GREEN, LED_BLUE, LED_OFF");
+        }
+        
+        void loop() {
+            if (Serial.available() > 0) {
+                String command = Serial.readStringUntil('\n');
+                command.trim();
+                
+                if (command == "LED_RED") {
+                    digitalWrite(redPin, HIGH);
+                    digitalWrite(greenPin, LOW);
+                    digitalWrite(bluePin, LOW);
+                    Serial.println("LED: RED");
+                }
+                else if (command == "LED_GREEN") {
+                    digitalWrite(redPin, LOW);
+                    digitalWrite(greenPin, HIGH);
+                    digitalWrite(bluePin, LOW);
+                    Serial.println("LED: GREEN");
+                }
+                else if (command == "LED_BLUE") {
+                    digitalWrite(redPin, LOW);
+                    digitalWrite(greenPin, LOW);
+                    digitalWrite(bluePin, HIGH);
+                    Serial.println("LED: BLUE");
+                }
+                else if (command == "LED_OFF") {
+                    digitalWrite(redPin, LOW);
+                    digitalWrite(greenPin, LOW);
+                    digitalWrite(bluePin, LOW);
+                    Serial.println("LED: OFF");
+                }
+                else if (command == "HANDSHAKE") {
+                    Serial.println("HANDSHAKE_OK");
+                }
+            }
+        }
+        */
+        
+        // ==============================================
+        // START APPLICATION
+        // ==============================================
+        
+        window.addEventListener('load', init);
+        window.addEventListener('beforeunload', cleanup);
+        
+        // Debug functions
+        window.debugInfo = function() {
+            console.log("Cubes:", cubes.length);
+            console.log("Grabbed:", grabbedCube?.userData.id);
+            console.log("Hand closed:", isHandClosed);
+            console.log("Arduino connected:", arduinoConnected);
+            console.log("Tracking lines:", showTrackingLines);
+        };
+    </script>
+</body>
+</html>
